@@ -31,7 +31,7 @@ import time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -249,31 +249,57 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def serve_paste_login(
+@dataclass
+class LoginHandle:
+    """Async handle for a running paste-login server."""
+
+    url: str
+    label: str
+    done: threading.Event
+    _server: http.server.ThreadingHTTPServer
+    _thread: threading.Thread
+    _saved: dict[str, Any]
+
+    def cancel(self) -> None:
+        self._server.shutdown()
+        self._thread.join(timeout=2)
+
+    def wait(self, timeout: float | None = None) -> str | None:
+        finished = self.done.wait(timeout=timeout)
+        self.cancel()
+        if not finished:
+            return None
+        return self._saved.get("label")
+
+    @property
+    def result(self) -> dict[str, Any] | None:
+        return dict(self._saved) if self._saved.get("label") else None
+
+
+def start_paste_login(
     settings: Settings,
     store: AccountStore,
     *,
     label: str,
-    open_browser: bool = True,
     host: str = "127.0.0.1",
     port: int | None = None,
-    timeout: float = 600.0,
-) -> str:
-    """Run a one-shot HTTP server that accepts a pasted session.
+    open_browser: bool = True,
+    on_save: "Callable[[dict[str, Any]], None] | None" = None,
+) -> LoginHandle:
+    """Spawn the paste-login server without blocking.
 
-    Returns the label of the saved account. Blocks until a successful save
-    or ``timeout`` seconds elapse.
+    ``on_save(payload)`` fires from the server thread when a save succeeds;
+    ``payload = {"label", "consoname", "email", "user_id"}``.
     """
     import asyncio
 
-    port = port or _free_port()
+    resolved_port = port or _free_port()
     token = secrets.token_urlsafe(16)
     done = threading.Event()
-    saved_label: dict[str, str] = {}
+    saved: dict[str, Any] = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        # Silence stdlib default logging.
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib name
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             return
 
         def _write(self, code: int, ctype: str, body: bytes) -> None:
@@ -284,7 +310,7 @@ def serve_paste_login(
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+        def do_GET(self) -> None:  # noqa: N802
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path == "/":
                 q = urllib.parse.parse_qs(parsed.query)
@@ -317,7 +343,6 @@ def serve_paste_login(
                 )
                 return
 
-            # Verify online in a fresh event loop; the server thread has none.
             loop = asyncio.new_event_loop()
             try:
                 user = loop.run_until_complete(
@@ -355,31 +380,60 @@ def serve_paste_login(
                     refresh_token=str(session["refresh_token"]),
                     expires_at=expires_at,
                 )
-            saved_label["label"] = new_label
+            saved.update(
+                label=new_label,
+                consoname=consoname,
+                email=str(user.get("email") or ""),
+                user_id=str(user.get("id") or ""),
+            )
             self._write(
                 200, "application/json",
                 json.dumps(
                     {"ok": True, "label": new_label, "consoname": consoname}
                 ).encode(),
             )
+            if on_save is not None:
+                try:
+                    on_save(dict(saved))
+                except Exception:  # noqa: BLE001
+                    log.exception("on_save callback failed")
             done.set()
 
-    server = http.server.ThreadingHTTPServer((host, port), Handler)
+    server = http.server.ThreadingHTTPServer((host, resolved_port), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    url = f"http://{host}:{port}/?t={token}"
+    url = f"http://{host}:{resolved_port}/?t={token}"
     log.info("login helper listening on %s", url)
     if open_browser:
         try:
             webbrowser.open(url)
         except Exception:  # noqa: BLE001
             log.warning("could not open browser automatically; visit %s", url)
-    print(f"[login] paste helper: {url}")
-    try:
-        finished = done.wait(timeout=timeout)
-    finally:
-        server.shutdown()
-        thread.join(timeout=2)
-    if not finished:
+    return LoginHandle(
+        url=url, label=label, done=done, _server=server, _thread=thread, _saved=saved,
+    )
+
+
+def serve_paste_login(
+    settings: Settings,
+    store: AccountStore,
+    *,
+    label: str,
+    open_browser: bool = True,
+    host: str = "127.0.0.1",
+    port: int | None = None,
+    timeout: float = 600.0,
+) -> str:
+    """Blocking variant of :func:`start_paste_login`.
+
+    Prints the URL to stdout and blocks until a save or timeout.
+    """
+    handle = start_paste_login(
+        settings, store,
+        label=label, host=host, port=port, open_browser=open_browser,
+    )
+    print(f"[login] paste helper: {handle.url}")
+    saved = handle.wait(timeout=timeout)
+    if saved is None:
         raise TimeoutError("login helper timed out; nothing saved")
-    return saved_label.get("label", label)
+    return saved

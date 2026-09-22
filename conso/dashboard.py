@@ -136,6 +136,8 @@ class Dashboard:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._interrupts: dict[str, asyncio.Event] = {}
+        self._login_handle: Any = None      # LoginHandle | None
+        self._input_state: dict[str, Any] | None = None  # active prompt
         # Seed views from store + local state.
         for account in store.all():
             self._ensure_view(account)
@@ -438,11 +440,73 @@ class Dashboard:
             if not order:
                 return None
             return order[self.model.selected_index % len(order)]
+    # -- add / remove accounts -------------------------------------------
+    def begin_add_account(self, label: str) -> str | None:
+        """Spawn the paste-login server; returns the local URL."""
+        from .login import start_paste_login
+        if not label:
+            self._log("*", "add", "label required", "bad")
+            return None
+        if self._login_handle is not None:
+            self._log("*", "add", "login helper already running", "warn")
+            return self._login_handle.url
+
+        def _on_save(payload: dict[str, Any]) -> None:
+            saved = payload.get("label") or label
+            self._log(
+                saved, "add",
+                f"saved (consoname={payload.get('consoname') or '?'})",
+                "good",
+            )
+            # Reload store view, then poll profile for the new label.
+            self.store.load()
+            for account in self.store.all():
+                if account.label == saved:
+                    self._ensure_view(account)
+            self.refresh_profiles([saved])
+            self._login_handle = None
+
+        try:
+            handle = start_paste_login(
+                self.settings, self.store,
+                label=label,
+                open_browser=True,
+                on_save=_on_save,
+            )
+        except OSError as exc:
+            self._log("*", "add", f"port bind failed: {exc}", "bad")
+            return None
+        self._login_handle = handle
+        self._log("*", "add", f"paste helper at {handle.url}", "info")
+        self._set_status(f"paste session at {handle.url}  (Esc to cancel)")
+        return handle.url
+
+    def cancel_add_account(self) -> None:
+        if self._login_handle is None:
+            return
+        self._login_handle.cancel()
+        self._login_handle = None
+        self._log("*", "add", "helper cancelled", "warn")
+        self._set_status("")
+
+    def remove_account(self, label: str) -> None:
+        if not self.store.get(label):
+            self._log(label, "remove", "no such account", "bad")
+            return
+        self.store.remove(label)
+        with self._lock:
+            self.model.accounts.pop(label, None)
+            if self.model.selected_index >= len(self.model.accounts) and self.model.accounts:
+                self.model.selected_index = len(self.model.accounts) - 1
+        self._log(label, "remove", "deleted from store", "warn")
 
     # -- lifecycle --------------------------------------------------------
     def close(self) -> None:
         self._stop.set()
         self.stop_all()
+        if self._login_handle is not None:
+            self._login_handle.cancel()
+            self._login_handle = None
         self.bg.stop()
 
 
@@ -657,8 +721,8 @@ def _draw(stdscr, dash: Dashboard) -> None:
     # Footer
     footer_y = max_y - 1
     footer = (
-        " [e] earn all  [E] earn selected  [r] refresh  [t] test  "
-        "[↑/↓] select  [space] toggle  [x] stop  [q] quit "
+        " [e] earn  [E] earn-sel  [a] add-account  [d] delete-sel  "
+        "[r] refresh  [t] test  [space] toggle  [x] stop  [q] quit "
     )
     stdscr.attron(curses.color_pair(COLOR_HEADER) | curses.A_BOLD)
     _safe_addstr(stdscr, footer_y, 0, " " * (max_x - 1))
@@ -682,6 +746,62 @@ def _tick_ttls(dash: Dashboard) -> None:
                 view.auth_ttl -= 1
 
 
+def _prompt_line(stdscr, dash: Dashboard, prompt: str, initial: str = "") -> str | None:
+    """Simple single-line input row above the footer. Esc cancels."""
+    max_y, max_x = stdscr.getmaxyx()
+    row_y = max_y - 2
+    buf = list(initial)
+    curses_error = False
+    try:
+        curses.curs_set(1)
+    except curses.error:
+        curses_error = True
+    stdscr.timeout(-1)  # blocking during prompt
+    try:
+        while True:
+            _safe_addstr(stdscr, row_y, 0, " " * (max_x - 1), curses.color_pair(COLOR_ROW_SEL))
+            text = f"{prompt}: {''.join(buf)}"
+            _safe_addstr(stdscr, row_y, 0, text, curses.color_pair(COLOR_ROW_SEL))
+            try:
+                stdscr.move(row_y, min(max_x - 2, len(text)))
+            except curses.error:
+                pass
+            stdscr.refresh()
+            ch = stdscr.getch()
+            if ch in (10, 13):  # Enter
+                return "".join(buf).strip()
+            if ch == 27:  # Esc
+                return None
+            if ch in (curses.KEY_BACKSPACE, 127, 8):
+                if buf:
+                    buf.pop()
+                continue
+            if 32 <= ch < 127:
+                buf.append(chr(ch))
+    finally:
+        stdscr.timeout(int(REFRESH_INTERVAL * 1000))
+        if not curses_error:
+            try:
+                curses.curs_set(0)
+            except curses.error:
+                pass
+
+
+def _confirm(stdscr, dash: Dashboard, msg: str) -> bool:
+    """Yes/No confirm above the footer. Returns True only on 'y'."""
+    max_y, max_x = stdscr.getmaxyx()
+    row_y = max_y - 2
+    _safe_addstr(stdscr, row_y, 0, " " * (max_x - 1), curses.color_pair(COLOR_WARN))
+    _safe_addstr(stdscr, row_y, 0, f"{msg}  [y/N]", curses.color_pair(COLOR_WARN))
+    stdscr.refresh()
+    stdscr.timeout(-1)
+    try:
+        ch = stdscr.getch()
+    finally:
+        stdscr.timeout(int(REFRESH_INTERVAL * 1000))
+    return ch in (ord("y"), ord("Y"))
+
+
 def _curses_main(stdscr, dash: Dashboard) -> None:
     try:
         curses.curs_set(0)
@@ -703,9 +823,14 @@ def _curses_main(stdscr, dash: Dashboard) -> None:
         now = time.time()
 
         if ch != -1:
-            if ch in (ord("q"), 27):  # ESC
+            if ch == 27:  # Esc — cancel active login, or quit
+                if dash._login_handle is not None:
+                    dash.cancel_add_account()
+                else:
+                    break
+            elif ch == ord("q"):
                 break
-            if ch in (curses.KEY_UP, ord("k")):
+            elif ch in (curses.KEY_UP, ord("k")):
                 dash.move_selection(-1)
             elif ch in (curses.KEY_DOWN, ord("j")):
                 dash.move_selection(1)
@@ -725,8 +850,16 @@ def _curses_main(stdscr, dash: Dashboard) -> None:
                 dash.stop_all()
             elif ch == ord("p"):
                 dash.refresh_profiles()
+            elif ch == ord("a"):
+                default = f"account{len(dash.store.all()) + 1}"
+                label = _prompt_line(stdscr, dash, "new account label", default)
+                if label:
+                    dash.begin_add_account(label)
+            elif ch == ord("d"):
+                label = dash.selected_label()
+                if label and _confirm(stdscr, dash, f"delete account {label!r}?"):
+                    dash.remove_account(label)
             elif ch == curses.KEY_RESIZE:
-                # Next draw redraws at the new size.
                 pass
 
         _tick_ttls(dash)

@@ -121,6 +121,14 @@ Menu keys:
 
 Account pickers accept comma-separated indices or labels; blank input
 targets every enabled account. `Ctrl-C` inside an action returns to the
+
+`a` opens a label prompt above the footer; hit Enter to launch the
+paste-login helper on `127.0.0.1:<port>` and the browser opens the paste
+page automatically. Save through the browser, and the account appears in
+the dashboard the moment the server accepts it — a `refresh_profiles`
+wave for the new label runs immediately after save. `Esc` while the helper
+is running cancels it without exiting the dashboard; `Esc` on its own
+quits like `q`. `d` deletes the highlighted account after a `y/N` confirm.
 menu without exiting the process.
 
 ## Live dashboard (curses TUI)
