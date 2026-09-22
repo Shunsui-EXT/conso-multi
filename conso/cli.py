@@ -207,6 +207,28 @@ async def _cmd_refresh(settings: Settings, store: AccountStore, args: argparse.N
     return 0 if summary.ok_count() == len(summary.outcomes) else 1
 
 
+async def _cmd_bootstrap(settings: Settings, store: AccountStore, args: argparse.Namespace) -> int:
+    from .runner import task_bootstrap
+    interrupt = install_signal_flag()
+    accounts = _resolve_accounts(store, args.label)
+    summary = await run_wave(
+        settings, store, accounts, task_bootstrap(settings), interrupt=interrupt,
+    )
+    _print(
+        [
+            {"label": o.label, "ok": o.ok, "error": o.error, "result": o.payload}
+            for o in summary.outcomes
+        ]
+    )
+    banned = any(
+        (isinstance(o.payload, dict) and o.payload.get("is_banned"))
+        for o in summary.outcomes if o.ok
+    )
+    if banned:
+        return 3
+    return 0 if summary.ok_count() == len(summary.outcomes) else 1
+
+
 def _cmd_platforms() -> int:
     rows = []
     for model, platform in TOP_MODELS:
@@ -288,6 +310,29 @@ def build_parser() -> argparse.ArgumentParser:
         aliases=["tui"],
         help="live curses dashboard: header, account table, activity log",
     )
+    p_login = sub.add_parser(
+        "login",
+        help="reverse-engineered login helper (paste extension session)",
+    )
+    p_login.add_argument(
+        "label", nargs="?", default="primary",
+        help="account label to save under (default: primary)",
+    )
+    p_login.add_argument("--port", type=int, default=0, help="local port (0 = auto)")
+    p_login.add_argument(
+        "--no-open", action="store_true",
+        help="do not open the browser; just print the URL",
+    )
+    p_login.add_argument(
+        "--timeout", type=float, default=600.0,
+        help="seconds to wait for a paste (default 600)",
+    )
+    p_boot = sub.add_parser(
+        "bootstrap",
+        help="first-time setup: verify auth, auto-claim daily checkin, "
+             "print X-connect link if missing",
+    )
+    p_boot.add_argument("--label", default="", help="comma list; default = every enabled")
     return parser
 
 
@@ -327,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_refresh(settings, store, args))
     if cmd == "earn":
         return asyncio.run(_cmd_earn(settings, store, args))
+    if cmd == "bootstrap":
+        return asyncio.run(_cmd_bootstrap(settings, store, args))
     if cmd == "platforms":
         return _cmd_platforms()
     if cmd in ("interactive", "menu"):
@@ -335,5 +382,24 @@ def main(argv: list[str] | None = None) -> int:
     if cmd in ("dashboard", "tui"):
         from .dashboard import run as run_dashboard
         return run_dashboard(settings, store)
+    if cmd == "login":
+        from .login import serve_paste_login
+        try:
+            label = serve_paste_login(
+                settings,
+                store,
+                label=args.label,
+                open_browser=not args.no_open,
+                port=args.port or None,
+                timeout=args.timeout,
+            )
+        except TimeoutError as exc:
+            print(f"login timed out: {exc}", file=sys.stderr)
+            return 2
+        except Exception as exc:  # noqa: BLE001
+            print(f"login failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"saved account {label!r}")
+        return 0
 
     parser.error(f"unknown command {cmd}")

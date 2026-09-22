@@ -48,6 +48,32 @@ The extension stores its Supabase session in `chrome.storage.local` under
 
 ## Adding accounts
 
+## Reverse-engineered pipeline
+
+See [`docs/pipeline.md`](docs/pipeline.md) for the extracted flow:
+Google OAuth id-token, Supabase `signInWithIdToken`, X connect via
+`/api/extension/x`, the Postgres RPC surface, and the measured
+server-side guards.
+
+Two entry points:
+
+```bash
+python3 main.py login              # local paste helper (Chrome ext session)
+python3 main.py bootstrap          # verify auth + auto-claim checkin
+```
+
+`login` opens a local page that walks pasting the extension's
+`chrome.storage.local["sb-jzxlayjrsdbyzykuiqns-auth-token"]` value; the
+helper verifies the access token against Supabase, resolves the
+`consoname`, and writes an account to `data/accounts.json`. Rotation is
+then handled by the built-in proactive refresh.
+
+`bootstrap` walks the account through the first-run steps the extension
+would: session verify, `daily-checkin-v1` claim, X-link status check. It
+prints a hint when the X account is not linked yet (the connect flow
+cannot be replicated headlessly — the `/api/extension/x/start` cookie is
+bound to the extension context).
+
 ```bash
 python3 main.py accounts add primary
 # prompts for access_token and refresh_token (hidden input)
