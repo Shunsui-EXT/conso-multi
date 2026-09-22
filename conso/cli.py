@@ -280,8 +280,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("platforms", help="show the locked (model, platform) set")
     sub.add_parser(
         "interactive",
-        aliases=["menu", "tui"],
+        aliases=["menu"],
         help="interactive menu (default when no subcommand is given)",
+    )
+    sub.add_parser(
+        "dashboard",
+        aliases=["tui"],
+        help="live curses dashboard: header, account table, activity log",
     )
     return parser
 
@@ -324,8 +329,11 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_earn(settings, store, args))
     if cmd == "platforms":
         return _cmd_platforms()
-    if cmd in ("interactive", "menu", "tui"):
+    if cmd in ("interactive", "menu"):
         from .interactive import run as run_interactive
         return run_interactive(settings, store)
+    if cmd in ("dashboard", "tui"):
+        from .dashboard import run as run_dashboard
+        return run_dashboard(settings, store)
 
     parser.error(f"unknown command {cmd}")

@@ -96,6 +96,43 @@ Menu keys:
 Account pickers accept comma-separated indices or labels; blank input
 targets every enabled account. `Ctrl-C` inside an action returns to the
 menu without exiting the process.
+
+## Live dashboard (curses TUI)
+
+```
+python3 main.py dashboard   # or: tui
+```
+
+Curses UI, zero deps:
+- **Header:** clock, account count, running-task count, banned count, cap,
+  ceiling, pacing, parallelism, dry-run.
+- **Totals row:** aggregate server zaps and today's server total across
+  every visible account.
+- **Account table:** label, consoname, state, local today (from
+  `data/state/<label>.json`), server daily (from `daily_zaps_earned`),
+  server total (`total_zaps`), auth TTL (counts down live).
+- **Activity log:** per-account events (earn credits, refresh, poll errors)
+  streamed newest-first.
+- **Footer:** keybindings.
+
+Keys:
+
+| key | action |
+|---|---|
+| `e` | start earn wave for every enabled account |
+| `E` | start earn wave for the highlighted account only |
+| `r` | force JWT refresh for every enabled account |
+| `t` | pre-flight (auth + profile) for every enabled account |
+| `x` | signal every running wave to stop |
+| `↑` / `↓` / `k` / `j` | move selection |
+| `space` | toggle enabled state on the highlighted account |
+| `p` | poll profile snapshot now |
+| `q` / `Esc` | quit |
+
+All actions run on a background asyncio loop; the UI stays responsive.
+Profile snapshots also auto-poll every 30 s so `daily_zaps_earned`
+converges without operator input, and auth TTL ticks down every second
+with a warning colour when it enters the refresh window.
 ## Daily use
 
 ```bash
