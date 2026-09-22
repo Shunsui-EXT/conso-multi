@@ -229,7 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Conso multi-account zap automation.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     # accounts
     accounts_parser = sub.add_parser("accounts", help="manage accounts")
@@ -278,6 +278,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_earn.add_argument("--dry-run", action="store_true", help="build payloads, post nothing")
 
     sub.add_parser("platforms", help="show the locked (model, platform) set")
+    sub.add_parser(
+        "interactive",
+        aliases=["menu", "tui"],
+        help="interactive menu (default when no subcommand is given)",
+    )
     return parser
 
 
@@ -294,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     store = AccountStore(settings.accounts_file)
     store.load()
 
-    cmd = args.command
+    cmd = args.command or "interactive"
     if cmd == "accounts":
         sub = args.accounts_command
         if sub == "list":
@@ -319,5 +324,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_earn(settings, store, args))
     if cmd == "platforms":
         return _cmd_platforms()
+    if cmd in ("interactive", "menu", "tui"):
+        from .interactive import run as run_interactive
+        return run_interactive(settings, store)
 
     parser.error(f"unknown command {cmd}")

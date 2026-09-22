@@ -63,6 +63,39 @@ python3 main.py accounts remove  alt1
 `accounts add` upserts by label — re-running with the same label rotates
 credentials in place.
 
+
+## Interactive menu
+
+`python3 main.py` with no subcommand opens a zero-dependency stdlib menu.
+Actions call the same runner primitives the CLI does, so there is one
+behaviour to reason about, not two.
+
+```
+python3 main.py             # default: menu
+python3 main.py interactive # explicit
+python3 main.py menu        # alias
+python3 main.py tui         # alias
+```
+
+Menu keys:
+
+| key | action |
+|---|---|
+| 1 | list accounts (also shown on every loop) |
+| 2 | add / update account (prompts securely for tokens) |
+| 3 | enable account |
+| 4 | disable account |
+| 5 | remove account |
+| t | test — auth + profile pre-flight |
+| s | status snapshot |
+| r | force JWT refresh |
+| e | earn (asks platforms, corpus, attachment, dry-run) |
+| p | show the locked (model, platform) set |
+| q | quit |
+
+Account pickers accept comma-separated indices or labels; blank input
+targets every enabled account. `Ctrl-C` inside an action returns to the
+menu without exiting the process.
 ## Daily use
 
 ```bash
