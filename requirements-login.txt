@@ -1,2 +1,0 @@
-# Optional login helper. Not required for runtime; only for `login --browser`.
-playwright>=1.44

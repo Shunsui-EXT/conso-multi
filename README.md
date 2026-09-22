@@ -48,104 +48,15 @@ The extension stores its Supabase session in `chrome.storage.local` under
 
 ## Adding accounts
 
-## Reverse-engineered pipeline
+Grab `access_token` and `refresh_token` from a signed-in Conso extension:
+open `chrome://extensions` → CONSO service worker → in DevTools run
 
-See [`docs/pipeline.md`](docs/pipeline.md) for the extracted flow:
-Google OAuth id-token, Supabase `signInWithIdToken`, X connect via
-`/api/extension/x`, the Postgres RPC surface, and the measured
-server-side guards.
-
-Three entry points:
-
-```bash
-python3 main.py login                      # full CLI (browser) — default
-python3 main.py login --mode paste         # fallback: paste helper
-python3 main.py bootstrap                  # verify auth + auto-claim checkin
+```js
+chrome.storage.local.get(
+  "sb-jzxlayjrsdbyzykuiqns-auth-token", console.log)
 ```
 
-### `login --mode browser` (default)
-
-Launches Chromium via Playwright with the Conso extension loaded, waits
-for the operator to complete Google sign-in inside that Chromium, then
-captures the Supabase session out of the extension's own
-`chrome.storage.local` and writes it to `data/accounts.json`. No copy-
-paste. Extension folder is auto-detected (`../Conso/Extension`) or set
-with `--extension /path/to/Extension`.
-
-Requires `playwright` (optional dep):
-
-```bash
-pip install -r requirements-login.txt
-python3 -m playwright install chromium
-```
-
-Flags:
-
-| flag | meaning |
-|---|---|
-| `--profile PATH` | reuse a Chromium user-data dir (skips Google consent on repeat) |
-| `--keep-profile` | keep the temp profile after login |
-| `--timeout N` | seconds to wait for sign-in (default 600) |
-| `--extension PATH` | override the extension folder |
-
-### `login --mode paste` (fallback)
-
-
-### `login --mode email` / `--mode otp`
-
-Signs in via Supabase's email endpoints (`grant_type=password` or the
-magic-link OTP). Both require an hCaptcha token, so this mode depends on
-the [`waguriagentic/captcha-solver`](https://github.com/waguriagentic/captcha-solver)
-sidecar running locally.
-
-Prereq:
-
-```bash
-# see the solver's README; systemd unit lives on port 8877 by default
-curl http://127.0.0.1:8877/health
-export CAPTCHA_SOLVER_URL=http://127.0.0.1:8877        # optional
-export CAPTCHA_SOLVER_TOKEN=<bearer if remote>         # optional
-export CONSO_HCAPTCHA_SITEKEY=<uuid>                    # required (cache once)
-```
-
-The Supabase project publishes only Google + email providers today, so
-the hCaptcha sitekey is not in the extension bundle — grab it from the
-conso.xyz sign-in page's DOM once, then cache in the env var above (or
-pass `--sitekey <uuid>` every time).
-
-```bash
-# email + password
-python3 main.py login alt2 --mode email --email foo@bar.com
-#   → prompts for password, solves hCaptcha via the sidecar,
-#     POSTs /auth/v1/token?grant_type=password, persists the session.
-
-# OTP magic-link (6-digit code)
-python3 main.py login alt3 --mode otp --email foo@bar.com
-#   → solves hCaptcha, POSTs /auth/v1/otp, prompts for the 6-digit code
-#     from the email, POSTs /auth/v1/verify.
-
-python3 main.py login alt4 --mode otp --email new@bar.com --create-user
-#   → same, but permits Supabase to create the user if it does not exist.
-```
-
-Flags: `--sitekey`, `--captcha-url` (page the sitekey embeds on, default
-`https://www.conso.xyz`), `--password`, `--otp-code`, `--create-user`.
-Opens a local HTML page and expects the operator to paste the extension
-session by hand. Useful when Playwright/Chromium is not available.
-`--port`, `--no-open`, `--timeout` control the local server. Grab the
-session with:
-
-```
-chrome.storage.local.get("sb-jzxlayjrsdbyzykuiqns-auth-token", console.log)
-```
-
-### `bootstrap`
-
-`bootstrap` walks the account through the first-run steps the extension
-would: session verify, `daily-checkin-v1` claim, X-link status check. It
-prints a hint when the X account is not linked yet (the connect flow
-cannot be replicated headlessly — the `/api/extension/x/start` cookie is
-bound to the extension context).
+then feed them to `accounts add`:
 
 ```bash
 python3 main.py accounts add primary
@@ -160,9 +71,8 @@ python3 main.py accounts remove  alt1
 ```
 
 `accounts add` upserts by label — re-running with the same label rotates
-credentials in place.
-
-
+credentials in place. Refreshes after that are automatic (proactive JWT
+rotation before `exp`).
 ## Interactive menu
 
 `python3 main.py` with no subcommand opens a zero-dependency stdlib menu.
@@ -194,14 +104,6 @@ Menu keys:
 
 Account pickers accept comma-separated indices or labels; blank input
 targets every enabled account. `Ctrl-C` inside an action returns to the
-
-`a` opens a label prompt above the footer; hit Enter to launch the
-paste-login helper on `127.0.0.1:<port>` and the browser opens the paste
-page automatically. Save through the browser, and the account appears in
-the dashboard the moment the server accepts it — a `refresh_profiles`
-wave for the new label runs immediately after save. `Esc` while the helper
-is running cancels it without exiting the dashboard; `Esc` on its own
-quits like `q`. `d` deletes the highlighted account after a `y/N` confirm.
 menu without exiting the process.
 
 ## Live dashboard (curses TUI)

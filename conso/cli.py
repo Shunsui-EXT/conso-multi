@@ -207,26 +207,6 @@ async def _cmd_refresh(settings: Settings, store: AccountStore, args: argparse.N
     return 0 if summary.ok_count() == len(summary.outcomes) else 1
 
 
-async def _cmd_bootstrap(settings: Settings, store: AccountStore, args: argparse.Namespace) -> int:
-    from .runner import task_bootstrap
-    interrupt = install_signal_flag()
-    accounts = _resolve_accounts(store, args.label)
-    summary = await run_wave(
-        settings, store, accounts, task_bootstrap(settings), interrupt=interrupt,
-    )
-    _print(
-        [
-            {"label": o.label, "ok": o.ok, "error": o.error, "result": o.payload}
-            for o in summary.outcomes
-        ]
-    )
-    banned = any(
-        (isinstance(o.payload, dict) and o.payload.get("is_banned"))
-        for o in summary.outcomes if o.ok
-    )
-    if banned:
-        return 3
-    return 0 if summary.ok_count() == len(summary.outcomes) else 1
 
 
 def _cmd_platforms() -> int:
@@ -310,74 +290,6 @@ def build_parser() -> argparse.ArgumentParser:
         aliases=["tui"],
         help="live curses dashboard: header, account table, activity log",
     )
-    p_login = sub.add_parser(
-        "login",
-        help="full-CLI login: launch Chromium with the Conso extension and "
-             "capture the Supabase session automatically",
-    )
-    p_login.add_argument(
-        "label", nargs="?", default="primary",
-        help="account label to save under (default: primary)",
-    )
-    p_login.add_argument(
-        "--mode",
-        choices=("browser", "paste", "email", "otp"),
-        default="browser",
-        help="'browser' launches Chromium with the Conso extension "
-             "(default); 'paste' expects a hand-pasted extension session; "
-             "'email' signs in with email+password via the captcha-solver "
-             "sidecar; 'otp' uses email one-time codes",
-    )
-    p_login.add_argument("--email", type=str, default="", help="email address (email/otp modes)")
-    p_login.add_argument(
-        "--password", type=str, default="",
-        help="password (email mode); prompted securely if omitted",
-    )
-    p_login.add_argument(
-        "--sitekey", type=str, default="",
-        help="hCaptcha sitekey; falls back to $CONSO_HCAPTCHA_SITEKEY",
-    )
-    p_login.add_argument(
-        "--captcha-url", type=str, default="https://www.conso.xyz",
-        help="page the sitekey lives on (default https://www.conso.xyz)",
-    )
-    p_login.add_argument(
-        "--otp-code", type=str, default="",
-        help="pre-supply the 6-digit code (otp mode); prompted if omitted",
-    )
-    p_login.add_argument(
-        "--create-user", action="store_true",
-        help="allow signup when the email is not known (otp mode)",
-    )
-    p_login.add_argument(
-        "--extension", type=str, default="",
-        help="path to the unpacked Conso extension folder (browser mode; "
-             "auto-detected if omitted)",
-    )
-    p_login.add_argument(
-        "--profile", type=str, default="",
-        help="reuse a Chromium user-data dir (browser mode); implies --keep-profile",
-    )
-    p_login.add_argument(
-        "--keep-profile", action="store_true",
-        help="keep the Chromium profile after login (browser mode)",
-    )
-    p_login.add_argument("--port", type=int, default=0,
-                         help="local port for paste mode (0 = auto)")
-    p_login.add_argument(
-        "--no-open", action="store_true",
-        help="paste mode only: do not auto-open the browser",
-    )
-    p_login.add_argument(
-        "--timeout", type=float, default=600.0,
-        help="seconds to wait for the login (default 600)",
-    )
-    p_boot = sub.add_parser(
-        "bootstrap",
-        help="first-time setup: verify auth, auto-claim daily checkin, "
-             "print X-connect link if missing",
-    )
-    p_boot.add_argument("--label", default="", help="comma list; default = every enabled")
     return parser
 
 
@@ -417,8 +329,6 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_refresh(settings, store, args))
     if cmd == "earn":
         return asyncio.run(_cmd_earn(settings, store, args))
-    if cmd == "bootstrap":
-        return asyncio.run(_cmd_bootstrap(settings, store, args))
     if cmd == "platforms":
         return _cmd_platforms()
     if cmd in ("interactive", "menu"):
@@ -427,95 +337,5 @@ def main(argv: list[str] | None = None) -> int:
     if cmd in ("dashboard", "tui"):
         from .dashboard import run as run_dashboard
         return run_dashboard(settings, store)
-    if cmd == "login":
-        if args.mode == "browser":
-            from pathlib import Path
-            from .login_browser import BrowserLoginError, login_via_browser
-            try:
-                result = login_via_browser(
-                    settings, store,
-                    label=args.label,
-                    extension_dir=Path(args.extension) if args.extension else None,
-                    user_data_dir=Path(args.profile) if args.profile else None,
-                    keep_profile=args.keep_profile or bool(args.profile),
-                    timeout=args.timeout,
-                )
-            except BrowserLoginError as exc:
-                print(f"login failed: {exc}", file=sys.stderr)
-                return 1
-            except KeyboardInterrupt:
-                print("cancelled", file=sys.stderr)
-                return 2
-            _print(
-                {
-                    "label": result.label,
-                    "consoname": result.consoname,
-                    "email": result.email,
-                    "user_id": result.user_id,
-                    "expires_at": result.expires_at,
-                }
-            )
-            return 0
-        if args.mode in ("email", "otp"):
-            from .login_email import (
-                EmailLoginError,
-                login_via_email_otp,
-                login_via_email_password,
-            )
-            if not args.email:
-                print("email is required for --mode email/otp", file=sys.stderr)
-                return 2
-            try:
-                if args.mode == "email":
-                    result = login_via_email_password(
-                        settings, store,
-                        label=args.label,
-                        email=args.email,
-                        password=args.password or None,
-                        sitekey=args.sitekey,
-                        captcha_url=args.captcha_url,
-                    )
-                else:
-                    result = login_via_email_otp(
-                        settings, store,
-                        label=args.label,
-                        email=args.email,
-                        code=args.otp_code or None,
-                        sitekey=args.sitekey,
-                        captcha_url=args.captcha_url,
-                        create_user=args.create_user,
-                    )
-            except EmailLoginError as exc:
-                print(f"login failed: {exc}", file=sys.stderr)
-                return 1
-            _print(
-                {
-                    "label": result.label,
-                    "consoname": result.consoname,
-                    "email": result.email,
-                    "user_id": result.user_id,
-                    "expires_at": result.expires_at,
-                }
-            )
-            return 0
-        # paste fallback
-        from .login import serve_paste_login
-        try:
-            label = serve_paste_login(
-                settings,
-                store,
-                label=args.label,
-                open_browser=not args.no_open,
-                port=args.port or None,
-                timeout=args.timeout,
-            )
-        except TimeoutError as exc:
-            print(f"login timed out: {exc}", file=sys.stderr)
-            return 2
-        except Exception as exc:  # noqa: BLE001
-            print(f"login failed: {exc}", file=sys.stderr)
-            return 1
-        print(f"saved account {label!r}")
-        return 0
 
     parser.error(f"unknown command {cmd}")
