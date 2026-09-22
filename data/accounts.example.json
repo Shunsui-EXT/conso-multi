@@ -1,0 +1,9 @@
+[
+  {
+    "label": "primary",
+    "access_token": "eyJhbGciOi...paste-here",
+    "refresh_token": "paste-refresh-token-here",
+    "enabled": true,
+    "note": "optional human-readable memo"
+  }
+]

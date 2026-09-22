@@ -1,0 +1,7 @@
+.env
+data/state/
+data/accounts.json
+logs/
+__pycache__/
+*.pyc
+.venv/
