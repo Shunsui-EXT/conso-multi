@@ -312,20 +312,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_login = sub.add_parser(
         "login",
-        help="reverse-engineered login helper (paste extension session)",
+        help="full-CLI login: launch Chromium with the Conso extension and "
+             "capture the Supabase session automatically",
     )
     p_login.add_argument(
         "label", nargs="?", default="primary",
         help="account label to save under (default: primary)",
     )
-    p_login.add_argument("--port", type=int, default=0, help="local port (0 = auto)")
+    p_login.add_argument(
+        "--mode",
+        choices=("browser", "paste"),
+        default="browser",
+        help="'browser' launches Chromium with the extension (default); "
+             "'paste' opens a local HTML form and expects the operator to "
+             "paste the extension session by hand",
+    )
+    p_login.add_argument(
+        "--extension", type=str, default="",
+        help="path to the unpacked Conso extension folder (browser mode; "
+             "auto-detected if omitted)",
+    )
+    p_login.add_argument(
+        "--profile", type=str, default="",
+        help="reuse a Chromium user-data dir (browser mode); implies --keep-profile",
+    )
+    p_login.add_argument(
+        "--keep-profile", action="store_true",
+        help="keep the Chromium profile after login (browser mode)",
+    )
+    p_login.add_argument("--port", type=int, default=0,
+                         help="local port for paste mode (0 = auto)")
     p_login.add_argument(
         "--no-open", action="store_true",
-        help="do not open the browser; just print the URL",
+        help="paste mode only: do not auto-open the browser",
     )
     p_login.add_argument(
         "--timeout", type=float, default=600.0,
-        help="seconds to wait for a paste (default 600)",
+        help="seconds to wait for the login (default 600)",
     )
     p_boot = sub.add_parser(
         "bootstrap",
@@ -383,6 +406,35 @@ def main(argv: list[str] | None = None) -> int:
         from .dashboard import run as run_dashboard
         return run_dashboard(settings, store)
     if cmd == "login":
+        if args.mode == "browser":
+            from pathlib import Path
+            from .login_browser import BrowserLoginError, login_via_browser
+            try:
+                result = login_via_browser(
+                    settings, store,
+                    label=args.label,
+                    extension_dir=Path(args.extension) if args.extension else None,
+                    user_data_dir=Path(args.profile) if args.profile else None,
+                    keep_profile=args.keep_profile or bool(args.profile),
+                    timeout=args.timeout,
+                )
+            except BrowserLoginError as exc:
+                print(f"login failed: {exc}", file=sys.stderr)
+                return 1
+            except KeyboardInterrupt:
+                print("cancelled", file=sys.stderr)
+                return 2
+            _print(
+                {
+                    "label": result.label,
+                    "consoname": result.consoname,
+                    "email": result.email,
+                    "user_id": result.user_id,
+                    "expires_at": result.expires_at,
+                }
+            )
+            return 0
+        # paste fallback
         from .login import serve_paste_login
         try:
             label = serve_paste_login(

@@ -55,18 +55,51 @@ Google OAuth id-token, Supabase `signInWithIdToken`, X connect via
 `/api/extension/x`, the Postgres RPC surface, and the measured
 server-side guards.
 
-Two entry points:
+Three entry points:
 
 ```bash
-python3 main.py login              # local paste helper (Chrome ext session)
-python3 main.py bootstrap          # verify auth + auto-claim checkin
+python3 main.py login                      # full CLI (browser) — default
+python3 main.py login --mode paste         # fallback: paste helper
+python3 main.py bootstrap                  # verify auth + auto-claim checkin
 ```
 
-`login` opens a local page that walks pasting the extension's
-`chrome.storage.local["sb-jzxlayjrsdbyzykuiqns-auth-token"]` value; the
-helper verifies the access token against Supabase, resolves the
-`consoname`, and writes an account to `data/accounts.json`. Rotation is
-then handled by the built-in proactive refresh.
+### `login --mode browser` (default)
+
+Launches Chromium via Playwright with the Conso extension loaded, waits
+for the operator to complete Google sign-in inside that Chromium, then
+captures the Supabase session out of the extension's own
+`chrome.storage.local` and writes it to `data/accounts.json`. No copy-
+paste. Extension folder is auto-detected (`../Conso/Extension`) or set
+with `--extension /path/to/Extension`.
+
+Requires `playwright` (optional dep):
+
+```bash
+pip install -r requirements-login.txt
+python3 -m playwright install chromium
+```
+
+Flags:
+
+| flag | meaning |
+|---|---|
+| `--profile PATH` | reuse a Chromium user-data dir (skips Google consent on repeat) |
+| `--keep-profile` | keep the temp profile after login |
+| `--timeout N` | seconds to wait for sign-in (default 600) |
+| `--extension PATH` | override the extension folder |
+
+### `login --mode paste` (fallback)
+
+Opens a local HTML page and expects the operator to paste the extension
+session by hand. Useful when Playwright/Chromium is not available.
+`--port`, `--no-open`, `--timeout` control the local server. Grab the
+session with:
+
+```
+chrome.storage.local.get("sb-jzxlayjrsdbyzykuiqns-auth-token", console.log)
+```
+
+### `bootstrap`
 
 `bootstrap` walks the account through the first-run steps the extension
 would: session verify, `daily-checkin-v1` claim, X-link status check. It

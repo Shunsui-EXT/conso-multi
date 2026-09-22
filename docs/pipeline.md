@@ -69,6 +69,38 @@ async function ca() {
 }
 ```
 
+### 2a-cli. Full-CLI reproduction (`login --mode browser`)
+
+The Google `client_id` above is an extension client — Google rejects any
+`redirect_uri` that is not `chrome.identity.getRedirectURL()`, which
+resolves to `https://<extension-id>.chromiumapp.org/`. That value is
+bound to the extension identity, not to a domain, so no external caller
+can replicate the OAuth call.
+
+`conso/login_browser.py` sidesteps this by loading the real extension
+into a headed Chromium controlled by Playwright, letting the operator
+complete Google sign-in inside that Chromium instance, and reading the
+persisted Supabase session out of the extension's own
+`chrome.storage.local`. From then on the CLI holds the same tokens the
+extension would.
+
+Sequence:
+
+1. `chromium.launch_persistent_context(user_data_dir=<tmp>, args=[
+   '--disable-extensions-except=<ext>', '--load-extension=<ext>'])`
+2. Wait for the extension's service worker
+   (`chrome-extension://<ext-id>/background.js`) to register.
+3. Operator clicks the extension's toolbar icon → Sign in with Google.
+4. Poll the service worker every second:
+   ```js
+   const rec = await chrome.storage.local.get(
+     "sb-jzxlayjrsdbyzykuiqns-auth-token");
+   ```
+5. First poll that returns `{access_token, refresh_token, …}` is treated
+   as success. The CLI verifies with `GET /auth/v1/user`, fetches
+   `consoname`, and persists to `data/accounts.json`.
+```
+
 Then Supabase:
 
 ```js
