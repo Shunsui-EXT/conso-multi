@@ -90,6 +90,46 @@ Flags:
 
 ### `login --mode paste` (fallback)
 
+
+### `login --mode email` / `--mode otp`
+
+Signs in via Supabase's email endpoints (`grant_type=password` or the
+magic-link OTP). Both require an hCaptcha token, so this mode depends on
+the [`waguriagentic/captcha-solver`](https://github.com/waguriagentic/captcha-solver)
+sidecar running locally.
+
+Prereq:
+
+```bash
+# see the solver's README; systemd unit lives on port 8877 by default
+curl http://127.0.0.1:8877/health
+export CAPTCHA_SOLVER_URL=http://127.0.0.1:8877        # optional
+export CAPTCHA_SOLVER_TOKEN=<bearer if remote>         # optional
+export CONSO_HCAPTCHA_SITEKEY=<uuid>                    # required (cache once)
+```
+
+The Supabase project publishes only Google + email providers today, so
+the hCaptcha sitekey is not in the extension bundle — grab it from the
+conso.xyz sign-in page's DOM once, then cache in the env var above (or
+pass `--sitekey <uuid>` every time).
+
+```bash
+# email + password
+python3 main.py login alt2 --mode email --email foo@bar.com
+#   → prompts for password, solves hCaptcha via the sidecar,
+#     POSTs /auth/v1/token?grant_type=password, persists the session.
+
+# OTP magic-link (6-digit code)
+python3 main.py login alt3 --mode otp --email foo@bar.com
+#   → solves hCaptcha, POSTs /auth/v1/otp, prompts for the 6-digit code
+#     from the email, POSTs /auth/v1/verify.
+
+python3 main.py login alt4 --mode otp --email new@bar.com --create-user
+#   → same, but permits Supabase to create the user if it does not exist.
+```
+
+Flags: `--sitekey`, `--captcha-url` (page the sitekey embeds on, default
+`https://www.conso.xyz`), `--password`, `--otp-code`, `--create-user`.
 Opens a local HTML page and expects the operator to paste the extension
 session by hand. Useful when Playwright/Chromium is not available.
 `--port`, `--no-open`, `--timeout` control the local server. Grab the

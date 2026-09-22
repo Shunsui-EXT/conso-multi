@@ -321,11 +321,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_login.add_argument(
         "--mode",
-        choices=("browser", "paste"),
+        choices=("browser", "paste", "email", "otp"),
         default="browser",
-        help="'browser' launches Chromium with the extension (default); "
-             "'paste' opens a local HTML form and expects the operator to "
-             "paste the extension session by hand",
+        help="'browser' launches Chromium with the Conso extension "
+             "(default); 'paste' expects a hand-pasted extension session; "
+             "'email' signs in with email+password via the captcha-solver "
+             "sidecar; 'otp' uses email one-time codes",
+    )
+    p_login.add_argument("--email", type=str, default="", help="email address (email/otp modes)")
+    p_login.add_argument(
+        "--password", type=str, default="",
+        help="password (email mode); prompted securely if omitted",
+    )
+    p_login.add_argument(
+        "--sitekey", type=str, default="",
+        help="hCaptcha sitekey; falls back to $CONSO_HCAPTCHA_SITEKEY",
+    )
+    p_login.add_argument(
+        "--captcha-url", type=str, default="https://www.conso.xyz",
+        help="page the sitekey lives on (default https://www.conso.xyz)",
+    )
+    p_login.add_argument(
+        "--otp-code", type=str, default="",
+        help="pre-supply the 6-digit code (otp mode); prompted if omitted",
+    )
+    p_login.add_argument(
+        "--create-user", action="store_true",
+        help="allow signup when the email is not known (otp mode)",
     )
     p_login.add_argument(
         "--extension", type=str, default="",
@@ -424,6 +446,48 @@ def main(argv: list[str] | None = None) -> int:
             except KeyboardInterrupt:
                 print("cancelled", file=sys.stderr)
                 return 2
+            _print(
+                {
+                    "label": result.label,
+                    "consoname": result.consoname,
+                    "email": result.email,
+                    "user_id": result.user_id,
+                    "expires_at": result.expires_at,
+                }
+            )
+            return 0
+        if args.mode in ("email", "otp"):
+            from .login_email import (
+                EmailLoginError,
+                login_via_email_otp,
+                login_via_email_password,
+            )
+            if not args.email:
+                print("email is required for --mode email/otp", file=sys.stderr)
+                return 2
+            try:
+                if args.mode == "email":
+                    result = login_via_email_password(
+                        settings, store,
+                        label=args.label,
+                        email=args.email,
+                        password=args.password or None,
+                        sitekey=args.sitekey,
+                        captcha_url=args.captcha_url,
+                    )
+                else:
+                    result = login_via_email_otp(
+                        settings, store,
+                        label=args.label,
+                        email=args.email,
+                        code=args.otp_code or None,
+                        sitekey=args.sitekey,
+                        captcha_url=args.captcha_url,
+                        create_user=args.create_user,
+                    )
+            except EmailLoginError as exc:
+                print(f"login failed: {exc}", file=sys.stderr)
+                return 1
             _print(
                 {
                     "label": result.label,

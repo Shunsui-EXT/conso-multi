@@ -99,6 +99,38 @@ Sequence:
 5. First poll that returns `{access_token, refresh_token, …}` is treated
    as success. The CLI verifies with `GET /auth/v1/user`, fetches
    `consoname`, and persists to `data/accounts.json`.
+
+### 2c. Email login (`login --mode email` / `--mode otp`)
+
+Supabase's project settings (`GET /auth/v1/settings`) report
+`google: true`, `email: true`. Password + OTP endpoints are live, but
+every request is gated by an **hCaptcha token** — probing
+`POST /auth/v1/token?grant_type=password` without a token returns:
+
+```
+HTTP 400 {"code":400,"error_code":"captcha_failed",
+          "msg":"captcha protection: request disallowed (no captcha_token found)"}
+```
+
+An invalid token surfaces `invalid-input-response`, which is hCaptcha's
+own error code — confirming the provider.
+
+`conso/login_email.py` delegates the captcha solve to a local
+[waguriagentic/captcha-solver](https://github.com/waguriagentic/captcha-solver)
+sidecar (`POST /solve` with `type: hcaptcha, sitekey, url`) and posts the
+resulting token to Supabase:
+
+```
+┌───────────────┐        ┌────────────────────┐        ┌──────────────────┐
+│ conso CLI     │──sitekey──►│ captcha-solver   │──token──►│ Supabase      │
+│ login --mode  │            │ (CloakBrowser)   │          │ /auth/v1/token│
+│ email / otp   │◄──session──┴──────────────────┴──────────┴───────────────┘
+└───────────────┘
+```
+
+The sitekey is not exposed by the extension (Conso's popup only surfaces
+Google OAuth), so the caller supplies it via `--sitekey` or
+`$CONSO_HCAPTCHA_SITEKEY`.
 ```
 
 Then Supabase:
