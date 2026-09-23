@@ -61,7 +61,7 @@ class Settings:
     supabase_url: str = "https://jzxlayjrsdbyzykuiqns.supabase.co"
     supabase_key: str = "sb_publishable_clAiRg6ffCznEAtg_bn19Q_yY0W5Hyd"
 
-    daily_zap_cap: float = 30.0
+    daily_zap_cap: float = 21.0
     credit_ceiling: float = 3.2
     gap_min: float = 60.0
     gap_max: float = 180.0
@@ -83,7 +83,7 @@ class Settings:
         return cls(
             supabase_url=os.environ.get("CONSO_SUPABASE_URL", cls.supabase_url),
             supabase_key=os.environ.get("CONSO_SUPABASE_KEY", cls.supabase_key),
-            daily_zap_cap=_float("CONSO_DAILY_ZAP_CAP", 30.0),
+            daily_zap_cap=_float("CONSO_DAILY_ZAP_CAP", 21.0),
             credit_ceiling=_float("CONSO_CREDIT_CEILING", 3.2),
             gap_min=_float("CONSO_GAP_MIN", 60.0),
             gap_max=_float("CONSO_GAP_MAX", 180.0),
