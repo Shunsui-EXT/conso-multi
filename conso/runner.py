@@ -208,5 +208,5 @@ def task_refresh(_settings: Settings) -> RunOne:
             "refreshed": did,
             "expires_in": int(client.auth.seconds_until_expiry()),
         }
-
+    return _task
 
